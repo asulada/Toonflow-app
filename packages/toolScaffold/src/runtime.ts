@@ -80,6 +80,19 @@ export interface MediaModel {
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   audio?: boolean | "optional";
   voices?: { title: string; voice: string }[];
+  /** 该模型允许通过供应商专属参数下发的键名，仅用于界面提示。 */
+  params?: string[];
+  /** 一键预设；params 为要填入的供应商专属参数对象，source 标明这条预设来自哪里。 */
+  presets?: MediaPreset[];
+}
+
+/** builtin = 随供应商文件发布的预置预设；user = 用户在本机界面上添加的自定义预设。 */
+export type MediaPresetSource = "builtin" | "user";
+
+export interface MediaPreset {
+  label: string;
+  params: Record<string, unknown>;
+  source?: MediaPresetSource;
 }
 
 export interface MediaReference {
@@ -109,6 +122,8 @@ export interface MediaGenerationRequest {
   sampleRate?: number;
   mode?: "singleImage" | "startEndRequired" | "endFrameOptional" | "startFrameOptional" | "text"
     | (`${"image" | "video" | "audio"}Reference:${number}`)[];
+  /** 供应商专属参数，逐次生成生效；同名字段覆盖模型配置里的默认值。 */
+  other?: Record<string, unknown>;
 }
 
 export interface GeneratedMedia {

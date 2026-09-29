@@ -58,6 +58,8 @@
           <generationSettings
             v-model:size="data.size"
             v-model:ratio="data.ratio"
+            v-model:customParams="data.customParams"
+            :model="selectedModel"
             :sizes="sizeOptions"
             :ratios="ratioOptions"
             :disabled="generating || deleting || !selectedModel" />
@@ -101,12 +103,13 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals 
   label: "图片生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; size: string; ratio: string });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; size: string; ratio: string; customParams: string });
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
 data.value.model ??= "";
 data.value.size ??= "";
 data.value.ratio ??= "16:9";
+data.value.customParams ??= "";
 const { refList, referenceMentions, setReferencePreview, removeReference } = useNodeReferences();
 const models = ref<NodeMediaModel[]>([]);
 const modelsLoading = ref(false);
@@ -199,6 +202,17 @@ function loadModels() {
   return modelsRequest;
 }
 
+// ACT: 高级参数按 JSON 对象读取；非法输入在提交时直接报错，不静默丢弃。
+function customParamsOf(text: string): Record<string, unknown> | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(trimmed); }
+  catch { throw new Error("高级参数不是合法的 JSON"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("高级参数必须是 JSON 对象");
+  return value as Record<string, unknown>;
+}
+
 async function startGeneration() {
   const choice = selectedModel.value;
   if (generating.value) throw new Error("图片正在生成，请等待完成");
@@ -217,6 +231,7 @@ async function startGeneration() {
     ratio: data.value.ratio,
     outputDirectory: `assets/${id}`,
     images: refList.value.flatMap((item) => (item.dataType === "IMAGE" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : [])),
+    other: customParamsOf(data.value.customParams),
   };
   generationController = controller;
   // ACT: 工具立即返回，任务由节点持有，停止或卸载时取消。
@@ -274,6 +289,7 @@ function getConfig() {
       modelId: selectedModel.value?.modelId ?? "",
       size: data.value.size,
       ratio: data.value.ratio,
+      customParams: data.value.customParams,
     },
     models: models.value,
   };
@@ -293,12 +309,13 @@ nodeTools.register({
 
 nodeTools.register({
   name: "setConfig",
-  description: "修改此图片生成节点的模型、分辨率或比例；先用 getConfig 查询可选能力，providerId 与 modelId 必须同时提供；不修改提示词、不启动生成",
+  description: "修改此图片生成节点的模型、分辨率、比例或每次生成的高级参数（customParams 为 JSON 对象字符串，可填键名以所选模型在 getConfig 返回的 params 为准，presets 为该模型自带的预设）；先用 getConfig 查询可选能力，providerId 与 modelId 必须同时提供；不修改提示词、不启动生成",
   parameters: z.strictObject({
     providerId: z.string().min(1).optional(),
     modelId: z.string().min(1).optional(),
     size: z.string().min(1).optional(),
     ratio: z.string().min(1).optional(),
+    customParams: z.string().optional(),
   }).refine((args) => (args.providerId === undefined) === (args.modelId === undefined), "providerId 与 modelId 必须同时提供"),
   async execute(args, { signal }) {
     signal?.throwIfAborted();
@@ -316,6 +333,10 @@ nodeTools.register({
     data.value.model = JSON.stringify([choice.providerId, choice.modelId]);
     if (args.size !== undefined) data.value.size = args.size;
     if (args.ratio !== undefined) data.value.ratio = args.ratio;
+    if (args.customParams !== undefined) {
+      customParamsOf(args.customParams);
+      data.value.customParams = args.customParams;
+    }
     return getConfig();
   },
 });

@@ -27,21 +27,77 @@ function imageOptions(value: unknown, pattern: RegExp) {
   return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.length <= 64 && item === item.trim() && pattern.test(item)))] : undefined;
 }
 
+// ACT: 宿主只认领 ProviderModel 已声明的字段，模型配置里其余键按约定作为供应商专属参数透传到 request.other。
+// params / presets 是模型级的界面声明（可填参数名、一键预设），只服务于编辑界面，不能跟着生成请求下发。
+const modelReservedKeys = new Set(["id", "label", "type", "think", "mode", "associationSkills", "audio", "imageSizes", "imageRatios", "durationResolutionMap", "voices", "params", "presets"]);
+
+// ACT: 模型级预设必须是 {label, params} 的字面量列表；坏数据静默丢弃，避免污染界面。
+// source 由供应商文件显式声明，缺省视为 builtin（预置预设）。
+function modelPresets(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const presets = value.flatMap(item => {
+    const entry = record(item);
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    const params = record(entry.params);
+    if (!label || label.length > 64 || !Object.keys(params).length || Object.keys(params).length > 64) return [];
+    return [{ label, params, source: entry.source === "user" ? "user" as const : "builtin" as const }];
+  });
+  return presets.length ? presets : undefined;
+}
+
+// ACT: 用户自定义预设按模型 ID 存在应用设置里，与供应商文件解耦，因此重传供应商 ts 不会丢。
+function modelUserPresets(value: unknown, modelId: string) {
+  const list = record(value)[modelId];
+  if (!Array.isArray(list)) return [];
+  return list.flatMap(item => {
+    const entry = record(item);
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    const params = record(entry.params);
+    return label && label.length <= 64 && Object.keys(params).length ? [{ label, params, source: "user" as const }] : [];
+  });
+}
+
+// ACT: 同名以用户自定义为准（用户可覆盖供应商预置项），其余按「预置在前、自定义在后」排列。
+function mergePresets(builtin: ReturnType<typeof modelPresets>, user: ReturnType<typeof modelUserPresets>) {
+  const base = builtin ?? [];
+  if (!user.length) return builtin;
+  if (!base.length) return user;
+  return [...base.filter(item => !user.some(entry => entry.label === item.label)), ...user];
+}
+
+function modelParams(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const params = [...new Set(value.filter((item): item is string => typeof item === "string" && !!item.trim() && item.length <= 64))];
+  return params.length ? params : undefined;
+}
+
+function modelOtherParams(model: unknown) {
+  const other = Object.fromEntries(Object.entries(record(model)).filter(([key]) => !modelReservedKeys.has(key)));
+  return Object.keys(other).length ? other : undefined;
+}
+
 export async function listMediaModels(): Promise<MediaModel[]> {
   const installedProviders = await listMediaProviders();
-  return installedProviders.flatMap(provider => provider.models.flatMap(model => {
-    if (model.type !== "image" && model.type !== "video" && model.type !== "audio") return [];
-    const builtIn = (mediaProviders as readonly Provider[]).find(item => item.id === provider.id)?.models.find(item => item.id === model.id);
-    return [{
-      providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
-      mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
-      ...(model.type === "audio" ? { voices: model.voices } : {}),
-      ...(model.type === "image" ? {
-        imageSizes: imageOptions(Array.isArray(model.imageSizes) ? model.imageSizes : builtIn?.imageSizes, /^[^\u0000-\u001f\u007f]+$/),
-        imageRatios: imageOptions(Array.isArray(model.imageRatios) ? model.imageRatios : builtIn?.imageRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/),
-      } : {}),
-    } as MediaModel];
-  }));
+  const configurations = record(conf.get("settings", {}).mediaProviderConfigs);
+  return installedProviders.flatMap(provider => {
+    const stored = record(configurations[provider.id]).presets;
+    return provider.models.flatMap(model => {
+      if (model.type !== "image" && model.type !== "video" && model.type !== "audio") return [];
+      const builtIn = (mediaProviders as readonly Provider[]).find(item => item.id === provider.id)?.models.find(item => item.id === model.id);
+      return [{
+        providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
+        mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
+        // ACT: 模型可自带「可填参数名」与「一键预设」，界面按所选模型渲染，不同模型互不共用；
+        // 预置预设来自供应商文件，用户自定义预设来自应用设置，同名时以用户自定义为准。
+        params: modelParams(model.params), presets: mergePresets(modelPresets(model.presets), modelUserPresets(stored, model.id)),
+        ...(model.type === "audio" ? { voices: model.voices } : {}),
+        ...(model.type === "image" ? {
+          imageSizes: imageOptions(Array.isArray(model.imageSizes) ? model.imageSizes : builtIn?.imageSizes, /^[^\u0000-\u001f\u007f]+$/),
+          imageRatios: imageOptions(Array.isArray(model.imageRatios) ? model.imageRatios : builtIn?.imageRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/),
+        } : {}),
+      } as MediaModel];
+    });
+  });
 }
 
 function detectMimeType(bytes: Uint8Array, fallback: string) {
@@ -140,6 +196,9 @@ export async function generateMedia(
   const providerInfo = await getMediaProvider(request.providerId);
   const model = providerInfo.models.find(model => model.id === request.modelId && model.type === mediaType);
   if (!model) invalid("所选媒体模型不存在或类型不匹配，请重新选择");
+  // ACT: 本次生成的自定义参数覆盖模型配置里的默认值；两者都为空时不传，供应商行为保持不变。
+  const mergedParams = { ...modelOtherParams(model), ...record(request.other) };
+  const other = Object.keys(mergedParams).length ? mergedParams : undefined;
   const configurations = record(conf.get("settings", {}).mediaProviderConfigs);
   const provider = await loadMediaProviderSource(providerInfo.source, record(configurations[providerInfo.id]), signal, undefined, directory);
   const generate = mediaType === "image" ? provider.generateImage : mediaType === "video" ? provider.generateVideo : provider.generateAudio;
@@ -153,9 +212,10 @@ export async function generateMedia(
     ? await provider.generateAudio!({
       model: request.modelId, text: request.prompt, audios: await references(request.audios, "audio"),
       voice: request.voice, speed: request.speed, volume: request.volume, format: request.format, sampleRate: request.sampleRate,
+      other,
     })
     : mediaType === "image"
-    ? await provider.generateImage!({ model: request.modelId, prompt: request.prompt, images, ratio: request.ratio, size: request.size })
+    ? await provider.generateImage!({ model: request.modelId, prompt: request.prompt, images, ratio: request.ratio, size: request.size, other })
     : await provider.generateVideo!({
       model: request.modelId, prompt: request.prompt, images,
       videos: await references(request.videos, "video"), audios: await references(request.audios, "audio"),
@@ -163,6 +223,7 @@ export async function generateMedia(
       lastFrame: request.lastFrame ? await readReference(directory, request.lastFrame, "image", signal) : undefined,
       ratio: request.ratio, resolution: request.resolution, duration: request.duration,
       generateAudio: request.generateAudio, mode: request.mode,
+      other,
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
   const written: string[] = [];

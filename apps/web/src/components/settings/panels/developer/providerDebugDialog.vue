@@ -368,9 +368,10 @@ async function install() {
   action.value = "install";
   errorMessage.value = "";
   try {
-    await axios.post("/api/providers/media/add", { source: source.value });
+    const { data } = await axios.post<{ data: { label: string; replaced?: boolean } }>("/api/providers/media/add", { source: source.value });
     invalidateNodeModels("media");
-    ElMessage.success("供应商已安装，可在媒体模型设置中配置使用");
+    // ACT: 同名供应商重复上传会直接覆盖，这里区分提示，避免误以为新增了一份。
+    ElMessage.success(data.data.replaced ? `已覆盖供应商「${data.data.label}」` : "供应商已安装，可在媒体模型设置中配置使用");
   } catch (error) { showError(error); }
   finally { action.value = ""; }
 }

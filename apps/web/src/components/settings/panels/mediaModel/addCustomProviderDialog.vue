@@ -63,7 +63,7 @@
               <el-input :modelValue="fileName" :prefixIcon="IconFileCode" placeholder="尚未选择文件" readonly aria-label="已选择的供应商文件" />
               <el-button :icon="IconFolderOpen" @click="fileInput?.click()">选择文件</el-button>
             </div>
-            <el-text class="fieldHint" type="info" size="small">支持 .ts 文件，最大 1 MB。</el-text>
+            <el-text class="fieldHint" type="info" size="small">支持 .ts 文件，最大 1 MB。重复上传同一供应商（ID 相同）会直接覆盖原文件，已保存的连接参数保持不变。</el-text>
           </el-form-item>
           <el-form-item v-else label="供应商代码">
             <el-input v-model="code" class="sourceInput" type="textarea" :rows="10" resize="none" aria-label="供应商代码" />
@@ -185,6 +185,8 @@ async function addProvider() {
       addedProvider.value = data.data;
       emit("added", data.data);
       invalidateNodeModels("media");
+      // ACT: 同名供应商（同一 ID）重复上传会直接覆盖，明确告知用户旧文件已被替换。
+      if (data.data.replaced) ElMessage.success(`已覆盖同名供应商「${data.data.label}」，已保存的连接配置保持不变`);
     }
     if (values) {
       const providerId = addedProvider.value.id;

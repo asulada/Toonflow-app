@@ -39,13 +39,45 @@
         <span class="sectionLabel">生成音频</span>
         <el-switch v-model="generateAudio" :disabled="disabled" aria-label="生成音频" />
       </div>
+      <div class="advancedOptions">
+        <div class="advancedHeader">
+          <span class="sectionLabel">高级参数</span>
+          <el-select
+            v-model="presetLabel"
+            class="presetSelect"
+            size="small"
+            placeholder="预设"
+            :disabled="disabled"
+            :teleported="false"
+            aria-label="参数预设"
+            @change="applyPreset">
+            <el-option value="" label="清空" />
+            <el-option-group v-if="builtinPresets.length" label="预置">
+              <el-option v-for="item in builtinPresets" :key="`builtin-${item.label}`" :value="item.label" :label="item.label" />
+            </el-option-group>
+            <el-option-group v-if="customPresets.length" label="自定义">
+              <el-option v-for="item in customPresets" :key="`user-${item.label}`" :value="item.label" :label="item.label" />
+            </el-option-group>
+          </el-select>
+        </div>
+        <el-input
+          v-model="customParams"
+          type="textarea"
+          :rows="3"
+          resize="none"
+          spellcheck="false"
+          :disabled="disabled"
+          placeholder='{"参数名": 值}'
+          aria-label="自定义参数 JSON" />
+        <div class="advancedHint" :class="{ invalid: customState.invalid }">{{ customState.hint }}</div>
+      </div>
     </div>
   </el-popover>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { ElButton, ElPopover, ElSelect, ElOption, ElSwitch } from "element-plus";
+import { computed, ref, watch } from "vue";
+import { ElButton, ElPopover, ElSelect, ElOption, ElOptionGroup, ElInput, ElSwitch } from "element-plus";
 import { IconChevronUp } from "@tabler/icons-vue";
 import type { NodeMediaModel } from "@toonflow/nodes-scaffold/runtime";
 
@@ -55,6 +87,45 @@ const resolution = defineModel<string>("resolution", { required: true });
 const ratio = defineModel<string>("ratio", { required: true });
 const mode = defineModel<string>("mode", { required: true });
 const generateAudio = defineModel<boolean>("generateAudio", { required: true });
+const customParams = defineModel<string>("customParams", { required: true });
+// ACT: 预设由模型声明 —— 预置来自供应商文件，自定义来自应用设置（宿主已合并，同名以自定义为准）；
+// 界面不内置任何模型专属取值；「清空」属界面行为，始终保留。
+function presetValue(item: { params: Record<string, unknown> }) {
+  return JSON.stringify(item.params, null, 2);
+}
+const paramPresets = computed(() => [
+  { label: "清空", value: "" },
+  ...(props.model?.presets ?? []).map(item => ({ label: item.label, value: presetValue(item) })),
+]);
+const builtinPresets = computed(() => (props.model?.presets ?? []).filter(item => item.source !== "user"));
+const customPresets = computed(() => (props.model?.presets ?? []).filter(item => item.source === "user"));
+const supportedParams = computed(() => props.model?.params ?? []);
+const presetLabel = ref("");
+const customState = computed(() => {
+  const declared = supportedParams.value;
+  const supported = declared.length ? `该模型可填：${declared.join("、")}` : "";
+  const text = customParams.value.trim();
+  if (!text) return { invalid: false, hint: supported ? `留空表示使用模型默认参数；${supported}` : "留空表示使用模型默认参数" };
+  let value: unknown;
+  try { value = JSON.parse(text); }
+  catch { return { invalid: true, hint: "JSON 格式无效" }; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { invalid: true, hint: "必须是一个 JSON 对象" };
+  const keys = Object.keys(value);
+  if (!keys.length) return { invalid: false, hint: "空对象，等同于留空" };
+  const extra = declared.length ? keys.filter(key => !declared.includes(key)) : [];
+  if (extra.length) return { invalid: true, hint: `该模型未声明这些参数：${extra.join("、")}；可填：${declared.join("、")}` };
+  return { invalid: false, hint: `本次生成将传入：${keys.join("、")}` };
+});
+
+function applyPreset(label: string) {
+  const preset = paramPresets.value.find(item => item.label === label);
+  if (preset) customParams.value = preset.value;
+}
+
+watch([customParams, paramPresets], ([value, presets]) => {
+  const preset = presets.find(item => item.value === value);
+  if (preset?.label !== presetLabel.value) presetLabel.value = preset?.label ?? "";
+});
 const modeLabels: Record<string, string> = {
   text: "文生视频", singleImage: "单图参考", startEndRequired: "首尾帧必填", endFrameOptional: "尾帧可选", startFrameOptional: "首帧可选",
 };
@@ -146,6 +217,33 @@ function ratioStyle(value: string) {
     justify-content: space-between;
     margin-top: 14px;
     .sectionLabel { margin: 0; }
+  }
+
+  .advancedOptions {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--el-border-color-lighter);
+
+    .advancedHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+
+      .sectionLabel { margin: 0; }
+      .presetSelect { width: 140px; }
+    }
+
+    .advancedHint {
+      margin-top: 6px;
+      color: var(--el-text-color-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+
+      &.invalid { color: var(--el-color-danger); }
+    }
   }
 }
 </style>

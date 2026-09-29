@@ -25,6 +25,16 @@ export const mediaModelsSchema = z.array(z.object({
   type: z.enum(["text", "image", "video", "audio"]),
 }).catchall(z.json())).max(2000).refine(models => new Set(models.map(model => model.id)).size === models.length, "模型 ID 不能重复");
 
+// ACT: 用户自定义一键预设保存在应用设置（settings.mediaProviderConfigs.<id>.presets）里，和 apiKey 同级，
+// 不写进供应商 ts —— 重新上传同一供应商文件时不会被覆盖；预置预设仍随供应商文件发布。
+export const mediaPresetsSchema = z.record(
+  z.string().min(1).max(200),
+  z.array(z.object({
+    label: z.string().min(1).max(64).refine(value => !!value.trim(), "预设名称不能为空"),
+    params: z.record(z.string(), z.json()).refine(value => Object.keys(value).length > 0, "预设参数不能是空对象"),
+  })).max(64),
+);
+
 function invalid(message: string, status = 400): never {
   throw Object.assign(new Error(message), { status });
 }
@@ -174,13 +184,17 @@ export async function addMediaProvider(source: string) {
   const result = metadata(fileName, source);
   const path = join((await directory(true))!, fileName);
   const release = lockWorkspaceFiles([path]);
-  try { await writeWorkspaceFile(path, source, true); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") invalid(`媒体供应商“${result.label}”已安装，请在「设置 → 媒体模型」中编辑，或先删除后重新安装。`, 409);
-    throw error;
+  try {
+    // ACT: 重复上传同一供应商（同名文件）直接覆盖，不再要求先删除；连接配置存在 settings.mediaProviderConfigs，不受影响。
+    const current = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (current && (current.isSymbolicLink() || !current.isFile())) invalid("供应商文件不能是符号链接或目录", 403);
+    await writeWorkspaceFile(path, source);
+    return { ...result, replaced: current !== null };
   }
   finally { release(); }
-  return result;
 }
 
 export async function saveMediaProvider(fileName: string, models: z.infer<typeof mediaModelsSchema>, revision: string, expectedApiKey?: string) {
@@ -211,6 +225,41 @@ export async function saveMediaProvider(fileName: string, models: z.infer<typeof
 export function getMediaProviderApiKey(id: string) {
   const value: unknown = conf.get(`settings.mediaProviderConfigs.${id}.apiKey`);
   return typeof value === "string" ? value.trim().replace(/^Bearer(?:\s+|$)/i, "").trim() : "";
+}
+
+// ACT: 用户预设与 apiKey 同放在 mediaProviderConfigs 下，因此 deleteMediaProvider 会连带清理；坏数据按空处理。
+function storedMediaPresets(id: string) {
+  const value: unknown = conf.get(`settings.mediaProviderConfigs.${id}.presets`);
+  const parsed = mediaPresetsSchema.safeParse(value ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+export async function readMediaProviderPresets(fileName: string) {
+  if (!mediaProviderFileSchema.safeParse(fileName).success) invalid("供应商文件名无效");
+  const path = await directory();
+  if (!path) invalid("供应商文件不存在", 404);
+  const current = await readProvider(path, fileName).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") invalid("供应商文件不存在", 404);
+    throw error;
+  });
+  return { fileName, id: current.id, presets: storedMediaPresets(current.id) };
+}
+
+export async function saveMediaProviderPresets(fileName: string, presets: z.infer<typeof mediaPresetsSchema>) {
+  if (!mediaProviderFileSchema.safeParse(fileName).success) invalid("供应商文件名无效");
+  const checked = mediaPresetsSchema.safeParse(presets);
+  if (!checked.success) invalid(checked.error.issues.map(issue => issue.message).join("；"));
+  const path = await directory();
+  if (!path) invalid("供应商文件不存在", 404);
+  const current = await readProvider(path, fileName);
+  const known = new Set(metadata(fileName, current.source).models.map(model => model.id));
+  const unknown = Object.keys(checked.data).filter(id => !known.has(id));
+  if (unknown.length) invalid(`预设引用了供应商中不存在的模型：${unknown.join("、")}`);
+  // ACT: 空列表不落盘，避免在 settings 里留下空对象；全空时直接删除该键。
+  const cleaned = Object.fromEntries(Object.entries(checked.data).filter(([, list]) => list.length));
+  if (Object.keys(cleaned).length) conf.set(`settings.mediaProviderConfigs.${current.id}.presets`, cleaned);
+  else conf.delete(`settings.mediaProviderConfigs.${current.id}.presets`);
+  return { fileName, id: current.id, presets: cleaned };
 }
 
 export async function refreshMediaProviderModels(fileName: string, revision?: string) {

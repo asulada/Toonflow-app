@@ -75,6 +75,33 @@
             </div>
           </el-form-item>
         </template>
+        <div class="presetSection">
+          <div class="presetHeader">
+            <span class="presetTitle">一键预设</span>
+            <el-tag size="small" type="info">预置 {{ builtinPresets.length }}</el-tag>
+            <el-tag size="small" type="success">自定义 {{ userPresets.length }}</el-tag>
+          </div>
+          <div v-if="builtinPresets.length || userPresets.length" class="presetList">
+            <div v-for="(item, index) in builtinPresets" :key="`builtin-${index}`" class="presetRow">
+              <el-tag size="small" type="info">预置</el-tag>
+              <span class="presetLabel">{{ item.label }}</span>
+              <code class="presetValue">{{ compactParams(item.params) }}</code>
+            </div>
+            <div v-for="(item, index) in userPresets" :key="`user-${index}`" class="presetRow custom">
+              <el-tag size="small" type="success">自定义</el-tag>
+              <div class="presetEditor">
+                <div class="presetEditorTop">
+                  <el-input v-model="item.label" size="small" maxlength="64" placeholder="预设名称" aria-label="自定义预设名称" />
+                  <el-button text type="danger" size="small" :icon="IconTrash" aria-label="删除自定义预设" @click="userPresets.splice(index, 1)">删除</el-button>
+                </div>
+                <el-input v-model="item.text" type="textarea" :rows="2" resize="vertical" spellcheck="false" placeholder='{"参数名": 值}' aria-label="自定义预设参数 JSON" />
+              </div>
+            </div>
+          </div>
+          <el-text v-else type="info" size="small">暂无预设</el-text>
+          <el-button class="presetAdd" size="small" :icon="IconPlus" @click="addUserPreset">添加自定义预设</el-button>
+          <div class="presetHint">自定义预设保存在应用设置里，重新上传供应商 ts 不会丢失；预置预设随供应商文件一起被替换。同名时以自定义为准。</div>
+        </div>
         <details class="modelOptions">
           <summary>更多配置（JSON）</summary>
           <el-input v-model="options" type="textarea" :rows="6" resize="vertical" aria-label="模型的更多配置" />
@@ -90,13 +117,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { IconArrowRight, IconPlus, IconTrash } from "@tabler/icons-vue";
-import type { MediaProviderModel } from "./types";
+import type { MediaProviderModel, MediaProviderPreset } from "./types";
 
-const { model, models } = defineProps<{ model?: MediaProviderModel; models: MediaProviderModel[] }>();
+const { model, models, presets } = defineProps<{
+  model?: MediaProviderModel;
+  models: MediaProviderModel[];
+  /** 该模型已有的用户自定义预设，来自应用设置，不在供应商 ts 里。 */
+  presets?: MediaProviderPreset[];
+}>();
 const visible = defineModel<boolean>({ default: false });
-const emit = defineEmits<{ confirmed: [model: MediaProviderModel] }>();
+const emit = defineEmits<{ confirmed: [model: MediaProviderModel, presets: MediaProviderPreset[]] }>();
 const modelTypes = [
   { value: "image", label: "图片" },
   { value: "video", label: "视频" },
@@ -127,6 +159,46 @@ let original: Record<string, unknown> = {};
 let initialDraft = createDraft();
 let initialExtraMode: unknown;
 
+// ACT: 预设分两类 —— 供应商 ts 里声明的算「预置」，界面上编辑的算「自定义」（存在应用设置里，重传 ts 不丢）。
+const userPresets = ref<{ label: string; text: string }[]>([]);
+const builtinPresets = computed(() => {
+  const list = Array.isArray(model?.presets) ? model.presets : [];
+  return list.flatMap(item => {
+    const entry = item as MediaProviderPreset | undefined;
+    if (!entry || typeof entry !== "object" || entry.source === "user") return [];
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    return label ? [{ label, params: entry.params ?? {} }] : [];
+  });
+});
+
+function compactParams(params: Record<string, unknown>) {
+  const text = JSON.stringify(params) ?? "";
+  return text.length > 64 ? `${text.slice(0, 61)}…` : text;
+}
+
+function addUserPreset() {
+  userPresets.value.push({ label: "", text: "{\n  \n}" });
+}
+
+function collectPresets() {
+  const result: MediaProviderPreset[] = [];
+  const seen = new Set<string>();
+  userPresets.value.forEach((item, index) => {
+    const label = item.label.trim();
+    if (!label) throw new Error(`请填写第 ${index + 1} 个自定义预设的名称`);
+    if (label.length > 64) throw new Error(`第 ${index + 1} 个自定义预设名称不能超过 64 个字符`);
+    if (seen.has(label)) throw new Error(`自定义预设名称重复：${label}`);
+    seen.add(label);
+    let params: unknown;
+    try { params = JSON.parse(item.text); }
+    catch { throw new Error(`第 ${index + 1} 个自定义预设的参数不是有效的 JSON`); }
+    if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error(`第 ${index + 1} 个自定义预设的参数必须是 JSON 对象`);
+    if (!Object.keys(params).length) throw new Error(`第 ${index + 1} 个自定义预设的参数不能是空对象`);
+    result.push({ label, params: params as Record<string, unknown>, source: "user" });
+  });
+  return result;
+}
+
 function createDraft() {
   return {
     id: "", label: "", type: "image" as MediaProviderModel["type"],
@@ -141,6 +213,7 @@ watch(visible, (isVisible) => {
   if (!isVisible) return;
   draft.value = createDraft();
   formError.value = "";
+  userPresets.value = (presets ?? []).map(item => ({ label: item.label, text: JSON.stringify(item.params ?? {}, null, 2) }));
   original = JSON.parse(JSON.stringify(model ?? {}));
   // ACT: 旧文本模型的扩展字段按原值保留，不再提供专用配置。
   const { id, label, type, ...extra } = original;
@@ -227,7 +300,7 @@ function confirmModel() {
         return { duration, resolution };
       });
     }
-    emit("confirmed", value);
+    emit("confirmed", value, collectPresets());
     visible.value = false;
   } catch (error) {
     formError.value = error instanceof Error ? error.message : "模型配置无效";
@@ -243,6 +316,73 @@ function confirmModel() {
   padding: 4px 8px;
 
   .el-select { width: 100%; }
+
+  .presetSection {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+
+    .presetHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .presetTitle { font-size: 13px; font-weight: 500; }
+    }
+
+    .presetList {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .presetRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+
+      .el-tag { flex-shrink: 0; }
+
+      &.custom { align-items: flex-start; }
+
+      .presetLabel { font-size: 13px; }
+
+      .presetValue {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--el-text-color-secondary);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .presetEditor {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+
+        .presetEditorTop {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+      }
+    }
+
+    .presetAdd { margin-top: 10px; }
+
+    .presetHint {
+      margin-top: 8px;
+      color: var(--el-text-color-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  }
 
   .videoModes {
     width: 100%;

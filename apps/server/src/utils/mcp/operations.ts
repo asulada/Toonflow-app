@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { toolNameSchema } from "@toonflow/tools-scaffold/runtime";
-import { mediaModelsSchema, mediaProviderFileSchema } from "@/utils/media/provider";
+import { mediaModelsSchema, mediaPresetsSchema, mediaProviderFileSchema } from "@/utils/media/provider";
 import { getMcpRuntime } from "@/utils/mcp/runtime";
 
 const maxBytes = 20 * 1024 * 1024;
@@ -97,12 +97,20 @@ export const appOperations: {
     name: "listMediaProviders", description: "读取媒体供应商及预置 models、配置 revision；保存与删除时使用最新 revision。", method: "GET", path: "/api/providers/media/list", parameters: z.strictObject({}),
   },
   {
-    name: "addMediaProvider", description: "从完整 TypeScript source 添加媒体供应商，沿用现有供应商结构检查。", method: "POST", path: "/api/providers/media/add",
+    name: "addMediaProvider", description: "从完整 TypeScript source 添加媒体供应商，沿用现有供应商结构检查；同 ID 供应商已存在时直接覆盖原文件，已保存的连接配置保持不变。", method: "POST", path: "/api/providers/media/add",
     parameters: z.strictObject({ source: z.string().min(1).max(2 * 1024 * 1024) }), refresh: { type: "provider" },
   },
   {
     name: "saveMediaProviderModels", description: "修改供应商 TS 中的 models；revision 不匹配时拒绝覆盖。API Key 等凭证通过 updateSettings 配置。", method: "PUT", path: "/api/providers/media/save",
     parameters: z.strictObject({ fileName: mediaProviderFileSchema, models: mediaModelsSchema, revision }), refresh: { type: "provider", nameField: "fileName" },
+  },
+  {
+    name: "readMediaProviderPresets", description: "读取某供应商保存在应用设置里的用户自定义一键预设（按模型 ID 分组）；预置预设随供应商 TS 发布，不在这里。", method: "GET", path: "/api/providers/media/presets",
+    parameters: z.strictObject({ fileName: mediaProviderFileSchema }),
+  },
+  {
+    name: "saveMediaProviderPresets", description: "整体覆盖某供应商的用户自定义一键预设；模型 ID 必须在供应商 TS 中已声明。重新上传供应商文件不会影响这份数据。", method: "PUT", path: "/api/providers/media/presets",
+    parameters: z.strictObject({ fileName: mediaProviderFileSchema, presets: mediaPresetsSchema }), refresh: { type: "provider", nameField: "fileName" },
   },
   {
     name: "deleteMediaProvider", description: "删除指定媒体供应商及其保存的配置；必须提供当前 revision。", method: "DELETE", path: "/api/providers/media/delete",

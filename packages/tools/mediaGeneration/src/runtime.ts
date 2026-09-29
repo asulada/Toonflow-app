@@ -16,6 +16,8 @@ const sharedFields = {
   outputDirectory: relativePath.optional(),
   images: z.array(imageReference).max(64).optional(),
   ratio: z.string().regex(/^[1-9]\d{0,3}:[1-9]\d{0,3}$/).optional(),
+  // ACT: 供应商专属参数；具体键与取值由供应商校验，宿主原样透传。
+  other: z.record(z.string(), z.json()).optional(),
 };
 const referenceMode = z.templateLiteral([z.enum(["image", "video", "audio"]), "Reference:", z.number()])
   .refine(value => /Reference:(?:[1-9]\d?|1\d{2}|2[0-4]\d|25[0-6])$/.test(value), "参考数量必须在 1 到 256 之间");
@@ -44,6 +46,7 @@ export const audioGenerationSchema = z.strictObject({
   modelId: sharedFields.modelId,
   prompt: sharedFields.prompt,
   outputDirectory: sharedFields.outputDirectory,
+  other: sharedFields.other,
   audios: z.array(audioReference).max(64).optional(),
   voice: z.string().trim().min(1).max(256).optional(),
   speed: z.number().finite().positive().optional(),
