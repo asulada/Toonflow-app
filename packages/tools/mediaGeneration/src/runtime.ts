@@ -36,6 +36,8 @@ export const videoGenerationSchema = z.strictObject({
   resolution: z.string().trim().min(1).max(64).optional(),
   duration: z.number().finite().positive().max(3600).optional(),
   generateAudio: z.boolean().optional(),
+  // ACT: 参数预设名；宿主按该模型当前预设表展开为 other，与手填 other 等效。
+  preset: z.string().trim().min(1).max(64).optional(),
   mode: z.union([
     z.enum(["singleImage", "startEndRequired", "endFrameOptional", "startFrameOptional", "text"]),
     z.array(referenceMode).min(1).max(3),

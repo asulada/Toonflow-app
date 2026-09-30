@@ -124,6 +124,8 @@ export interface MediaGenerationRequest {
     | (`${"image" | "video" | "audio"}Reference:${number}`)[];
   /** 供应商专属参数，逐次生成生效；同名字段覆盖模型配置里的默认值。 */
   other?: Record<string, unknown>;
+  /** 参数预设名；宿主按该模型当前预设表（预置 + 用户自定义）展开为 other，与手填 other 等效。 */
+  preset?: string;
 }
 
 export interface GeneratedMedia {

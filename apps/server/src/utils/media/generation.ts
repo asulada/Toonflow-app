@@ -196,10 +196,15 @@ export async function generateMedia(
   const providerInfo = await getMediaProvider(request.providerId);
   const model = providerInfo.models.find(model => model.id === request.modelId && model.type === mediaType);
   if (!model) invalid("所选媒体模型不存在或类型不匹配，请重新选择");
-  // ACT: 本次生成的自定义参数覆盖模型配置里的默认值；两者都为空时不传，供应商行为保持不变。
-  const mergedParams = { ...modelOtherParams(model), ...record(request.other) };
-  const other = Object.keys(mergedParams).length ? mergedParams : undefined;
   const configurations = record(conf.get("settings", {}).mediaProviderConfigs);
+  // ACT: 参数预设按名称展开成 other（预置 + 用户自定义，同名以用户自定义为准）；未指定预设时行为不变。
+  const preset = request.preset
+    ? mergePresets(modelPresets(model.presets), modelUserPresets(record(configurations[providerInfo.id]).presets, model.id))?.find(item => item.label === request.preset)
+    : undefined;
+  if (request.preset && !preset) invalid(`该模型没有名为「${request.preset}」的参数预设`);
+  // ACT: 本次生成的自定义参数覆盖模型配置里的默认值；两者都为空时不传，供应商行为保持不变。
+  const mergedParams = { ...modelOtherParams(model), ...(preset?.params ?? {}), ...record(request.other) };
+  const other = Object.keys(mergedParams).length ? mergedParams : undefined;
   const provider = await loadMediaProviderSource(providerInfo.source, record(configurations[providerInfo.id]), signal, undefined, directory);
   const generate = mediaType === "image" ? provider.generateImage : mediaType === "video" ? provider.generateVideo : provider.generateAudio;
   if (typeof generate !== "function") invalid(`此供应商不支持${{ image: "图片", video: "视频", audio: "音频" }[mediaType]}生成`);
