@@ -85,7 +85,7 @@
             <div v-for="(item, index) in builtinPresets" :key="`builtin-${index}`" class="presetRow">
               <el-tag size="small" type="info">预置</el-tag>
               <span class="presetLabel">{{ item.label }}</span>
-              <code class="presetValue">{{ compactParams(item.params) }}</code>
+              <code class="presetValue">{{ fullParams(item.params) }}</code>
             </div>
             <div v-for="(item, index) in userPresets" :key="`user-${index}`" class="presetRow custom">
               <el-tag size="small" type="success">自定义</el-tag>
@@ -171,9 +171,9 @@ const builtinPresets = computed(() => {
   });
 });
 
-function compactParams(params: Record<string, unknown>) {
-  const text = JSON.stringify(params) ?? "";
-  return text.length > 64 ? `${text.slice(0, 61)}…` : text;
+// ACT: 预设参数必须能被完整看到 —— 不在这里按长度截断，换行交给样式处理。
+function fullParams(params: Record<string, unknown>) {
+  return JSON.stringify(params) ?? "";
 }
 
 function addUserPreset() {
@@ -340,6 +340,7 @@ function confirmModel() {
 
     .presetRow {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 8px;
       min-width: 0;
@@ -351,12 +352,14 @@ function confirmModel() {
       .presetLabel { font-size: 13px; }
 
       .presetValue {
+        flex: 1 1 100%;
         min-width: 0;
-        overflow: hidden;
         color: var(--el-text-color-secondary);
         font-size: 12px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        line-height: 1.6;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+        word-break: break-all;
       }
 
       .presetEditor {

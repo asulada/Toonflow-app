@@ -20,7 +20,7 @@ metadata:
 |---|---|
 | 创意或一句话 | 补齐人物目标、阻力和结果，形成可审阅的故事与本次完整剧本 |
 | 小说、故事或原著片段 | 确认改编范围，保留原文，追踪事件、人物、对白与未知信息，转成可视听剧本 |
-| 已定稿剧本 / 时间轴 + 当前目标是制作、生成、继续或修订视频 | **无论用户是否提到“Seedance”“提示词”或具体模型，都立即进入本文件内嵌的「SEEDANCE EPISODE DIRECTOR · PART A」执行。** 用户未指定模型时，立即锁存 Seedance 路由，并只用一次简短提问确认“Seedance 2.0 还是 2.5”；用户已指定 2.0/2.5 时按对应模型路由。询问模型不得转去画布配置、资产流程或其他提示词方法。 |
+| 已定稿剧本 / 时间轴 + 当前目标是制作、生成、继续或修订视频 | **先看下方「MiniMax H3 路由」：目标视频模型属 MiniMax H3 系时走 H3，其余情况无论用户是否提到“Seedance”“提示词”或具体模型，都立即进入本文件内嵌的「SEEDANCE EPISODE DIRECTOR · PART A」执行。** 用户未指定模型时，立即锁存 Seedance 路由，并只用一次简短提问确认“Seedance 2.0 还是 2.5”；用户已指定 2.0/2.5 时按对应模型路由。询问模型不得转去画布配置、资产流程或其他提示词方法。 |
 | 已定稿剧本 / 时间轴 + 仅要求资产、剧本阅读、诊断或非视频任务 | 只处理用户明确要求的非视频范围；不因为存在定稿剧本就自动生成视频提示词。 |
 | Seedance 任务中用户未指定模型 | **必须先确认目标模型。** 只问一次“Seedance 2.0 还是 2.5”；这一步属于 PART A 的 A0 输入判定，不是普通配置询问。用户回答后继续同一个 Seedance 执行态；画幅、分辨率、参考模式、原生音频等执行配置不能替代、绕过或中断该路由。 |
 | Seedance 任务中用户已指定 2.0/2.5 | 直接执行 PART A；2.0 走 A9.1、2.5 走 A9.2。 |
@@ -29,7 +29,19 @@ metadata:
 
 > **Seedance 提示词生成规则已直接嵌入本 workflow，不是外部 Skill，也不是 workflow 去调用另一个 Skill。** 当任务进入「已确认剧本 → Seedance 2.0/2.5 分段提示词」阶段时，必须直接执行本文件下方的 **「SEEDANCE EPISODE DIRECTOR · PART A」**。该内嵌规则是本 workflow 在 Seedance 提示词生成阶段的最高优先级执行规范：以用户提供的 `SKILL-seedance-episode-director.md` A0–A12 为基线，并合入用户之后明确追加的连续性、生成稳定性与穿帮校验规则；若本 workflow 其他段落、references/methods、storyboard 或旧说明与其冲突，以当前内嵌 PART A 为准。除用户后续明确修改外，不得用其他方法重写、弱化或替换其中的剧情保真锁、目标模型确认规则、分段/时长规则、Reference binding、A9 模板、A11 校验或 A12 单次优化。
 
-### Seedance 路由锁存（最高优先级入口规则）
+### MiniMax H3 路由（入口第一判定，先于 Seedance）
+
+进入视频制作前，先读目标视频生成节点的 `getConfig`。若 `config.modelId` 或 `config.providerId` 含 `MiniMax H3`（不分大小写、忽略连字符，例如 `minimaxH3R2V`、`minimaxH3I2v`、`comfyuiLocalMinimaxH3R2v`、`toonflow-minimax-h3-r2v`），或所选模型 `label` 含 `MiniMax H3`，则**命中 H3 路由**：
+
+- **不进入 Seedance 路由，不执行本文件内嵌 PART A 的 A9 模板**（`Objective` / `Reference binding` / `Immutable locks` / `Timeline` / `Preserve` / `Avoid`）。
+- **改读 `h3video` 技能**，按它的双模式规范产出提示词：`config.mode` 为数组（含 `imageReference:N` / `audioReference:N` / `videoReference:N`，即多参考流，如全参考生视频）→ **Full-Reference 六段式**；`config.mode` 为单个字符串（`singleImage` / `startEndRequired` / `endFrameOptional` 等，即首尾帧流；`frameMode` **不是** `config.mode` 取值，是节点内部派生标记，不要拿它判定）→ **Base 三字段**。
+- **H3 提示词不使用 `{{ref N}}`**，改用 `<Subject N>` / `<Picture N>` / `<Audio N>` / `<Video N>`；画布侧按 `h3video` 第 3 节把资产与参考图映射成标签。
+- Seedance 的 A0–A8 创作判断原则（剧情保真、节拍解析、站位、表演、连续性、生成稳定性预检）**可以沿用其判断**，但最终输出外壳必须按 `h3video`，不得混用两套格式。
+- 未读到 `getConfig` 或模型未确定时，按 A0 的判定方式先确认目标模型，再决定走 H3 还是 Seedance；不猜测。
+
+### Seedance 路由锁存（H3 模型以外的视频任务入口规则）
+
+仅当目标视频模型**不属于 MiniMax H3 系**（见上方 H3 路由）时，才使用本节。
 
 当同时满足以下两项时，**自动视为 Seedance 任务**，不要求用户必须说出“Seedance”“2.0/2.5”“生成提示词”等触发词：
 
@@ -51,6 +63,8 @@ metadata:
 
 ### Seedance 阶段硬隔离（强制）
 
+**目标视频模型属 MiniMax H3 系时命中上方 H3 路由，不进入本隔离，改按 `h3video` 执行。**
+
 一旦命中上方“Seedance 路由锁存”——即已有可执行剧情输入且当前目标进入视频制作/生成/修订——立即进入**硬隔离执行态**；不要求用户额外说出“Seedance”或“提示词”：
 
 - 从进入 PART A 到最终提示词输出完成，**只执行本文件内嵌 PART A**，不得再读取或套用 `references/sourceAndScript.md`、`references/methods/*`、任何旧 storyboard/分镜规则或人类教学 references，亦不得从这些文件补第二套分段、时长、镜头、站位、表演、运镜、连续性、声音、Reference binding、模板或 QA 规则。
@@ -66,6 +80,8 @@ metadata:
 
 
 ## Seedance 提示词生成的内嵌执行核心
+
+**本节仅适用于非 MiniMax H3 模型。** 目标视频模型属 MiniMax H3 系时，提示词阶段改读 `h3video` 技能，不执行本节。
 
 以下内容以用户提供的 `SKILL-seedance-episode-director.md` PART A 为执行基线，并已合入用户后续明确追加的连续性、生成稳定性与穿帮校验要求。**运行时直接执行本节，不再读取、不再调用任何独立 seedance-episode-director Skill。** 本节与 workflow 其他内容冲突时，本节优先。
 
